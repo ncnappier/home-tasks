@@ -19,8 +19,9 @@ from datetime import date, datetime, timedelta, timezone
 
 from dateutil.rrule import rrulestr
 
-from homeassistant.components.calendar import CalendarEntity, CalendarEvent
+from homeassistant.components.calendar import CalendarEntity, CalendarEvent, CalendarEntityFeature
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.exceptions import ServiceValidationError
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -271,6 +272,78 @@ class _BaseHomeTasksCalendar(CalendarEntity):
 
 class HomeTasksCalendarEntity(_BaseHomeTasksCalendar):
     """Calendar view of tasks with due dates in a native Home Tasks list."""
+
+    _attr_supported_features = (
+        CalendarEntityFeature.CREATE_EVENT
+        | CalendarEntityFeature.UPDATE_EVENT
+        | CalendarEntityFeature.DELETE_EVENT
+    )
+
+    @staticmethod
+    def _event_due(start: date | datetime, end: date | datetime) -> tuple[str, str | None]:
+        """Convert a calendar start to the task's local due date/time.
+
+        Home Tasks represents a due instant rather than an event duration.
+        Reject invalid or mixed event ranges rather than silently changing them.
+        """
+        if isinstance(start, datetime) != isinstance(end, datetime):
+            raise ServiceValidationError("Calendar start and end must have matching types")
+        if end <= start:
+            raise ServiceValidationError("Calendar end must be after start")
+        if isinstance(start, datetime):
+            if start.tzinfo is None or end.tzinfo is None:
+                raise ServiceValidationError("Timed events must have a timezone")
+            local = dt_util.as_local(start)
+            return local.date().isoformat(), local.strftime("%H:%M")
+        return start.isoformat(), None
+
+    async def async_create_event(self, **kwargs) -> None:
+        """Create a linked Home Tasks item from a calendar event."""
+        summary = kwargs.get("summary")
+        start = kwargs.get("start")
+        end = kwargs.get("end")
+        if not summary or start is None or end is None:
+            raise ServiceValidationError("Event summary, start and end are required")
+        due_date, due_time = self._event_due(start, end)
+        await self._store.async_add_task(
+            summary, due_date=due_date, due_time=due_time,
+            notes=kwargs.get("description") or None,
+        )
+
+    async def async_update_event(self, uid: str, **kwargs) -> None:
+        """Edit the linked task identified by the calendar event UID."""
+        try:
+            task = self._store.get_task(uid)
+        except ValueError as err:
+            raise ServiceValidationError("Calendar event not found") from err
+        if kwargs.get("recurrence_id") or kwargs.get("recurrence_range"):
+            raise ServiceValidationError("Editing individual recurring occurrences is not supported")
+        changes = {}
+        if "summary" in kwargs:
+            changes["title"] = kwargs["summary"]
+        if "description" in kwargs:
+            changes["notes"] = kwargs["description"] or ""
+        if "start" in kwargs or "end" in kwargs:
+            if "start" not in kwargs or "end" not in kwargs:
+                raise ServiceValidationError("Both start and end are required to reschedule")
+            changes["due_date"], changes["due_time"] = self._event_due(
+                kwargs["start"], kwargs["end"]
+            )
+        if changes:
+            await self._store.async_update_task(task["id"], **changes)
+
+    async def async_delete_event(
+        self, uid: str, recurrence_id: str | None = None,
+        recurrence_range: str | None = None,
+    ) -> None:
+        """Delete the task linked to a calendar event."""
+        if recurrence_id or recurrence_range:
+            raise ServiceValidationError("Deleting individual recurring occurrences is not supported")
+        try:
+            self._store.get_task(uid)
+        except ValueError as err:
+            raise ServiceValidationError("Calendar event not found") from err
+        await self._store.async_delete_task(uid)
 
     def __init__(self, entry: ConfigEntry, store) -> None:
         self._entry = entry

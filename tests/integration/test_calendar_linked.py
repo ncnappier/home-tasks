@@ -13,7 +13,7 @@ async def test_create_linked_all_day_event(mock_config_entry, store):
     entity = HomeTasksCalendarEntity(mock_config_entry, store)
     await entity.async_create_event(
         summary="Dentist", description="Bring forms",
-        start=date(2027, 3, 12), end=date(2027, 3, 13),
+        dtstart=date(2027, 3, 12), dtend=date(2027, 3, 13),
     )
     task = next(t for t in store.tasks if t["title"] == "Dentist")
     assert task["due_date"] == "2027-03-12"
@@ -39,8 +39,8 @@ async def test_update_and_delete_linked_event(mock_config_entry, store):
     entity = HomeTasksCalendarEntity(mock_config_entry, store)
     task = await store.async_add_task("Original", due_date="2027-03-12")
     await entity.async_update_event(
-        task["id"], summary="Revised", description="Updated",
-        start=date(2027, 3, 15), end=date(2027, 3, 16),
+        task["id"], {"summary": "Revised", "description": "Updated",
+        "dtstart": date(2027, 3, 15), "dtend": date(2027, 3, 16)},
     )
     updated = store.get_task(task["id"])
     assert updated["title"] == "Revised"

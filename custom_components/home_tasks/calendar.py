@@ -300,22 +300,22 @@ class HomeTasksCalendarEntity(_BaseHomeTasksCalendar):
     async def async_create_event(self, **kwargs) -> None:
         """Create a linked Home Tasks item from a calendar event."""
         summary = kwargs.get("summary")
-        start = kwargs.get("start") or kwargs.get("start_date_time") or kwargs.get("start_date")
-        end = kwargs.get("end") or kwargs.get("end_date_time") or kwargs.get("end_date")
+        start = kwargs.get("dtstart") or kwargs.get("start") or kwargs.get("start_date_time") or kwargs.get("start_date")
+        end = kwargs.get("dtend") or kwargs.get("end") or kwargs.get("end_date_time") or kwargs.get("end_date")
         # HA's service schema may provide naive local datetimes.
         if isinstance(start, datetime) and start.tzinfo is None:
             start = start.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
         if isinstance(end, datetime) and end.tzinfo is None:
             end = end.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
         if not summary or start is None or end is None:
-            raise ServiceValidationError("Event summary, start and end are required")
+            raise ServiceValidationError("Event summary, dtstart and dtend are required (linked calendar v3)")
         due_date, due_time = self._event_due(start, end)
         await self._store.async_add_task(
             summary, due_date=due_date, due_time=due_time,
             notes=kwargs.get("description") or None,
         )
 
-    async def async_update_event(self, uid: str, **kwargs) -> None:
+    async def async_update_event(self, uid: str, event: dict | None = None, **kwargs) -> None:
         """Edit the linked task identified by the calendar event UID."""
         try:
             task = self._store.get_task(uid)
@@ -323,6 +323,11 @@ class HomeTasksCalendarEntity(_BaseHomeTasksCalendar):
             raise ServiceValidationError("Calendar event not found") from err
         if kwargs.get("recurrence_id") or kwargs.get("recurrence_range"):
             raise ServiceValidationError("Editing individual recurring occurrences is not supported")
+        kwargs = {**(event or {}), **kwargs}
+        if "dtstart" in kwargs:
+            kwargs["start"] = kwargs["dtstart"]
+        if "dtend" in kwargs:
+            kwargs["end"] = kwargs["dtend"]
         changes = {}
         if "summary" in kwargs:
             changes["title"] = kwargs["summary"]

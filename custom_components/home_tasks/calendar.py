@@ -300,8 +300,13 @@ class HomeTasksCalendarEntity(_BaseHomeTasksCalendar):
     async def async_create_event(self, **kwargs) -> None:
         """Create a linked Home Tasks item from a calendar event."""
         summary = kwargs.get("summary")
-        start = kwargs.get("start")
-        end = kwargs.get("end")
+        start = kwargs.get("start") or kwargs.get("start_date_time") or kwargs.get("start_date")
+        end = kwargs.get("end") or kwargs.get("end_date_time") or kwargs.get("end_date")
+        # HA's service schema may provide naive local datetimes.
+        if isinstance(start, datetime) and start.tzinfo is None:
+            start = start.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
+        if isinstance(end, datetime) and end.tzinfo is None:
+            end = end.replace(tzinfo=dt_util.DEFAULT_TIME_ZONE)
         if not summary or start is None or end is None:
             raise ServiceValidationError("Event summary, start and end are required")
         due_date, due_time = self._event_due(start, end)
